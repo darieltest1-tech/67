@@ -19,21 +19,30 @@ jobs:
         sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
         xcodebuild -version
 
-    # ⚡ Bypass del Assets.xcassets para evitar el error de actool
-    - name: Bypass Asset Catalog
+    # ⚡ Bypass del AppIcon para evitar error de actool
+    - name: Bypass AppIcon Only
       run: |
-        echo "==== Backing up Assets.xcassets ===="
-        mv ThreeOneOSFive/Assets.xcassets ThreeOneOSFive/Assets.xcassets_backup
-        mkdir -p ThreeOneOSFive/Assets.xcassets
-        cat > ThreeOneOSFive/Assets.xcassets/Contents.json << 'EOF'
+        echo "==== Backing up AppIcon ===="
+        mv ThreeOneOSFive/Assets.xcassets/AppIcon.appiconset ThreeOneOSFive/Assets.xcassets/AppIcon.appiconset_backup
+        
+        echo "==== Creating empty AppIcon ===="
+        mkdir -p ThreeOneOSFive/Assets.xcassets/AppIcon.appiconset
+        cat > ThreeOneOSFive/Assets.xcassets/AppIcon.appiconset/Contents.json << 'EOF'
         {
+          "images" : [
+            {
+              "idiom" : "universal",
+              "platform" : "ios",
+              "size" : "1024x1024"
+            }
+          ],
           "info" : {
             "author" : "xcode",
             "version" : 1
           }
         }
         EOF
-        echo "✅ Asset catalog bypassed"
+        echo "✅ AppIcon bypassed"
 
     - name: Build and archive
       run: |
@@ -52,12 +61,12 @@ jobs:
           -skipMacroValidation \
           -quiet
 
-    - name: Restore Asset Catalog
+    - name: Restore AppIcon
       if: always()
       run: |
-        rm -rf ThreeOneOSFive/Assets.xcassets
-        mv ThreeOneOSFive/Assets.xcassets_backup ThreeOneOSFive/Assets.xcassets
-        echo "✅ Asset catalog restored"
+        rm -rf ThreeOneOSFive/Assets.xcassets/AppIcon.appiconset
+        mv ThreeOneOSFive/Assets.xcassets/AppIcon.appiconset_backup ThreeOneOSFive/Assets.xcassets/AppIcon.appiconset
+        echo "✅ AppIcon restored"
 
     - name: Verify archive
       run: |
