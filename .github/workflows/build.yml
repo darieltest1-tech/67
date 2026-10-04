@@ -53,7 +53,6 @@ jobs:
           -scheme 3105 \
           -configuration Release \
           -sdk iphoneos \
-          -destination 'generic/platform=iOS' \
           -archivePath build/3105.xcarchive \
           CODE_SIGN_IDENTITY="" \
           CODE_SIGNING_REQUIRED=NO \
