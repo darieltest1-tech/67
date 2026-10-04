@@ -62,14 +62,12 @@ final class SupabaseService: ObservableObject {
     @Published var isMaintenanceMode: Bool = false
     @Published var maintenanceMessage: String = "El servicio está en mantenimiento. Vuelve pronto."
     
-    // MARK: - Internos (nonisolated para evitar warnings de concurrencia)
+    // MARK: - Internos
     
     nonisolated(unsafe) private var keyWebSocketTask: URLSessionWebSocketTask?
     nonisolated(unsafe) private var maintenanceWebSocketTask: URLSessionWebSocketTask?
     nonisolated(unsafe) private var heartbeatTimer: Timer?
     nonisolated(unsafe) private var maintenanceHeartbeatTimer: Timer?
-    
-    // MARK: - Device ID persistente
     
     private var deviceID: String {
         if let existing = UserDefaults.standard.string(forKey: "device_id") {
@@ -110,7 +108,7 @@ final class SupabaseService: ObservableObject {
                 throw SupabaseError.keyNotFound
             }
             
-            // Validaciones básicas
+            // Validaciones
             if key.isBanned {
                 throw SupabaseError.keyBanned
             }
@@ -129,7 +127,7 @@ final class SupabaseService: ObservableObject {
             // Registrar dispositivo
             await registerDevice(keyID: key.id)
             
-            // Guardar key actual
+            // Guardar key
             self.currentKey = key
             
             // Log de acceso
@@ -137,7 +135,7 @@ final class SupabaseService: ObservableObject {
                 await logAccess(keyValue: keyValue, action: "login")
             }
             
-            // Suscribirse a cambios en tiempo real
+            // Suscribirse a cambios
             subscribeToKeyChanges(keyID: key.id)
             
             return key
@@ -151,16 +149,14 @@ final class SupabaseService: ObservableObject {
     // MARK: - Verificar límite de dispositivos
     
     private func checkDeviceLimit(keyID: String) async throws {
-        // Obtener el límite
         guard let keyURL = URL(string: "\(Self.supabaseURL)/rest/v1/keys?id=eq.\(keyID)&select=max_devices"),
               let keyData = try? await fetchData(url: keyURL),
               let keyArray = try? JSONSerialization.jsonObject(with: keyData) as? [[String: Any]],
               let maxDevices = keyArray.first?["max_devices"] as? Int,
               maxDevices > 0 else {
-            return // Sin límite
+            return
         }
         
-        // Contar dispositivos
         guard let devicesURL = URL(string: "\(Self.supabaseURL)/rest/v1/key_devices?key_id=eq.\(keyID)&select=device_id"),
               let devicesData = try? await fetchData(url: devicesURL),
               let devicesArray = try? JSONSerialization.jsonObject(with: devicesData) as? [[String: Any]] else {
@@ -170,12 +166,10 @@ final class SupabaseService: ObservableObject {
         let currentCount = devicesArray.count
         let thisDeviceID = deviceID
         
-        // Verificar si este dispositivo ya está registrado
         let isThisDeviceRegistered = devicesArray.contains { device in
             (device["device_id"] as? String) == thisDeviceID
         }
         
-        // Si el límite está lleno Y este dispositivo NO está registrado → rechazar
         if currentCount >= maxDevices && !isThisDeviceRegistered {
             throw SupabaseError.deviceLimitReached
         }
@@ -248,11 +242,12 @@ final class SupabaseService: ObservableObject {
         
         // Heartbeat cada 25 segundos
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 25, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.sendKeyHeartbeat()
+            Task { @MainActor in
+                self?.sendKeyHeartbeat()
+            }
         }
         
-        // Suscribirse al canal de la key
+        // Suscribirse al canal
         let topic = "realtime:public:keys:id=eq.\(keyID)"
         let joinPayload: [String: Any] = [
             "topic": topic,
@@ -283,7 +278,6 @@ final class SupabaseService: ObservableObject {
             }
         }
         
-        // Escuchar mensajes
         Task { [weak self] in
             await self?.listenForKeyMessages(keyID: keyID)
         }
@@ -319,65 +313,66 @@ final class SupabaseService: ObservableObject {
     }
     
     private func handleKeyMessage(_ text: String, keyID: String) {
-    guard let data = text.data(using: .utf8),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        return
-    }
-    
-    if let event = json["event"] as? String,
-       event == "postgres_changes",
-       let payload = json["payload"] as? [String: Any],
-       let dataObj = payload["data"] as? [String: Any] {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
         
-        if let eventType = dataObj["type"] as? String {
-            switch eventType {
-            case "DELETE":
-                log("supabase: KEY DELETED — kicking user")
-                self.isKeyRevoked = true
-                return
-                
-            case "UPDATE", "INSERT":
-                if let record = dataObj["record"] as? [String: Any] {
-                    let isBanned = record["is_banned"] as? Bool ?? false
-                    let isActive = record["is_active"] as? Bool ?? true
-                    let expiresAt = record["expires_at"] as? String
-                    
-                    // 🚫 BANEADA o EXPIRADA → revocada
-                    if isBanned {
-                        log("supabase: KEY BANNED — kicking user")
-                        self.isKeyRevoked = true
-                        self.isKeyFrozen = false
-                        return
-                    }
-                    
-                    if let expiresAt,
-                       let date = ISO8601DateFormatter().date(from: expiresAt),
-                       date <= Date() {
-                        log("supabase: KEY EXPIRED — kicking user")
-                        self.isKeyRevoked = true
-                        self.isKeyFrozen = false
-                        return
-                    }
-                    
-                    // ❄️ CONGELADA (is_active = false) → pantalla de congelada
-                    if !isActive {
-                        log("supabase: KEY FROZEN — showing frozen screen")
-                        self.isKeyFrozen = true
-                        self.isKeyRevoked = false
-                        return
-                    }
-                    
-                    // ✅ Si está activa, quitar ambos estados
+        if let event = json["event"] as? String,
+           event == "postgres_changes",
+           let payload = json["payload"] as? [String: Any],
+           let dataObj = payload["data"] as? [String: Any] {
+            
+            if let eventType = dataObj["type"] as? String {
+                switch eventType {
+                case "DELETE":
+                    log("supabase: KEY DELETED — kicking user")
+                    self.isKeyRevoked = true
                     self.isKeyFrozen = false
-                    self.isKeyRevoked = false
+                    return
+                    
+                case "UPDATE", "INSERT":
+                    if let record = dataObj["record"] as? [String: Any] {
+                        let isBanned = record["is_banned"] as? Bool ?? false
+                        let isActive = record["is_active"] as? Bool ?? true
+                        let expiresAt = record["expires_at"] as? String
+                        
+                        // 🚫 BANEADA o EXPIRADA → revocada
+                        if isBanned {
+                            log("supabase: KEY BANNED — kicking user")
+                            self.isKeyRevoked = true
+                            self.isKeyFrozen = false
+                            return
+                        }
+                        
+                        if let expiresAt,
+                           let date = ISO8601DateFormatter().date(from: expiresAt),
+                           date <= Date() {
+                            log("supabase: KEY EXPIRED — kicking user")
+                            self.isKeyRevoked = true
+                            self.isKeyFrozen = false
+                            return
+                        }
+                        
+                        // ❄️ CONGELADA
+                        if !isActive {
+                            log("supabase: KEY FROZEN — showing frozen screen")
+                            self.isKeyFrozen = true
+                            self.isKeyRevoked = false
+                            return
+                        }
+                        
+                        // ✅ Activa
+                        self.isKeyFrozen = false
+                        self.isKeyRevoked = false
+                    }
+                    
+                default:
+                    break
                 }
-                
-            default:
-                break
             }
         }
     }
-}
     
     private func sendKeyHeartbeat() {
         guard let task = keyWebSocketTask else { return }
@@ -395,7 +390,7 @@ final class SupabaseService: ObservableObject {
         }
     }
     
-    // MARK: - Realtime: Escuchar cambios de mantenimiento
+    // MARK: - Realtime: Mantenimiento
     
     func subscribeToMaintenance() {
         maintenanceWebSocketTask?.cancel(with: .goingAway, reason: nil)
@@ -415,13 +410,12 @@ final class SupabaseService: ObservableObject {
         
         log("supabase: maintenance realtime connected")
         
-        // Heartbeat cada 25 segundos
         maintenanceHeartbeatTimer = Timer.scheduledTimer(withTimeInterval: 25, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.sendMaintenanceHeartbeat()
+            Task { @MainActor in
+                self?.sendMaintenanceHeartbeat()
+            }
         }
         
-        // Suscribirse al canal de app_config
         let topic = "realtime:public:app_config:id=eq.1"
         let joinPayload: [String: Any] = [
             "topic": topic,
@@ -452,7 +446,6 @@ final class SupabaseService: ObservableObject {
             }
         }
         
-        // Escuchar mensajes
         Task { [weak self] in
             await self?.listenForMaintenanceMessages()
         }
@@ -476,8 +469,6 @@ final class SupabaseService: ObservableObject {
                 }
             } catch {
                 log("supabase: maintenance ws error \(error)")
-                
-                // Reconectar después de 5 segundos
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 subscribeToMaintenance()
                 return
@@ -572,15 +563,16 @@ final class SupabaseService: ObservableObject {
     
     // MARK: - Desconectar
     
-   func disconnect() {
-    keyWebSocketTask?.cancel(with: .goingAway, reason: nil)
-    maintenanceWebSocketTask?.cancel(with: .goingAway, reason: nil)
-    heartbeatTimer?.invalidate()
-    heartbeatTimer = nil
-    maintenanceHeartbeatTimer?.invalidate()
-    maintenanceHeartbeatTimer = nil
-    isConnected = false
-    currentKey = nil
-    isKeyFrozen = false
-    isKeyRevoked = false
+    func disconnect() {
+        keyWebSocketTask?.cancel(with: .goingAway, reason: nil)
+        maintenanceWebSocketTask?.cancel(with: .goingAway, reason: nil)
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
+        maintenanceHeartbeatTimer?.invalidate()
+        maintenanceHeartbeatTimer = nil
+        isConnected = false
+        currentKey = nil
+        isKeyFrozen = false
+        isKeyRevoked = false
+    }
 }
