@@ -3,10 +3,6 @@ name: Build DARIELMODZ IPA
 on:
   push:
     branches: [ main, 3105-main ]
-    paths:
-      - 'ThreeOneOSFive/**'
-      - 'ThreeOneOSFive.xcodeproj/**'
-      - '.github/workflows/build.yml'
   workflow_dispatch:
 
 jobs:
@@ -22,30 +18,27 @@ jobs:
       run: |
         sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
         xcodebuild -version
-        xcodebuild -showsdks
 
-    # ⚡ Cache del runtime (solo se descarga la primera vez)
-    - name: Cache iOS Simulator Runtime
+    # ⚡ Cache del runtime iOS para no descargarlo cada vez
+    - name: Cache iOS Runtime
       uses: actions/cache@v4
       with:
         path: ~/Library/Developer/CoreSimulator/Profiles/Runtimes
-        key: ios-runtime-18.1-v2
+        key: ios-runtime-18.1-v3
 
-    - name: Install iOS SDK (if not cached)
+    - name: Install iOS Simulator Runtime
       run: |
         if [ ! -d ~/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS.simruntime ]; then
-          echo "Runtime not cached, downloading..."
+          echo "📥 Runtime not cached, downloading..."
           xcodebuild -downloadPlatform iOS -buildVersion 18.1 || \
           xcodebuild -downloadPlatform iOS || true
+          echo "✅ Download attempt finished"
         else
-          echo "Runtime already cached, skipping download"
+          echo "✅ Runtime already cached, skipping download"
         fi
-        echo "==== Available SDKs ===="
-        xcodebuild -showsdks
         echo "==== Available runtimes ===="
         xcrun simctl list runtimes || true
 
-    # ⚡ Compilación con optimizaciones
     - name: Build and archive
       run: |
         xcodebuild archive \
@@ -53,6 +46,7 @@ jobs:
           -scheme 3105 \
           -configuration Release \
           -sdk iphoneos \
+          -destination 'generic/platform=iOS' \
           -archivePath build/3105.xcarchive \
           CODE_SIGN_IDENTITY="" \
           CODE_SIGNING_REQUIRED=NO \
@@ -65,14 +59,12 @@ jobs:
 
     - name: Verify archive
       run: |
-        echo "==== Applications folder ===="
+        echo "==== Applications ===="
         ls -la build/3105.xcarchive/Products/Applications/
         echo "==== Patches ===="
         ls -la "build/3105.xcarchive/Products/Applications/3105.app/Patches/" || echo "Patches NOT FOUND"
-        echo "==== FF NORMAL ===="
-        ls -la "build/3105.xcarchive/Products/Applications/3105.app/Patches/FF NORMAL/" || echo "FF NORMAL NOT FOUND"
-        echo "==== FF MAX ===="
-        ls -la "build/3105.xcarchive/Products/Applications/3105.app/Patches/FF MAX/" || echo "FF MAX NOT FOUND"
+        ls -la "build/3105.xcarchive/Products/Applications/3105.app/Patches/FF NORMAL/" || true
+        ls -la "build/3105.xcarchive/Products/Applications/3105.app/Patches/FF MAX/" || true
 
     - name: Package unsigned IPA
       run: |
