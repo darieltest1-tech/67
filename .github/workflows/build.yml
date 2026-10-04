@@ -12,7 +12,7 @@ on:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 60
 
     steps:
     - name: Checkout code
@@ -22,15 +22,16 @@ jobs:
       run: |
         sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
         xcodebuild -version
+        xcodebuild -showsdks
 
     # ⚡ Cache del runtime (solo se descarga la primera vez)
     - name: Cache iOS Simulator Runtime
       uses: actions/cache@v4
       with:
         path: ~/Library/Developer/CoreSimulator/Profiles/Runtimes
-        key: ios-runtime-18.1-v1
+        key: ios-runtime-18.1-v2
 
-    - name: Install iOS Simulator Runtime (if not cached)
+    - name: Install iOS SDK (if not cached)
       run: |
         if [ ! -d ~/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS.simruntime ]; then
           echo "Runtime not cached, downloading..."
@@ -39,7 +40,10 @@ jobs:
         else
           echo "Runtime already cached, skipping download"
         fi
-        xcrun simctl list runtimes
+        echo "==== Available SDKs ===="
+        xcodebuild -showsdks
+        echo "==== Available runtimes ===="
+        xcrun simctl list runtimes || true
 
     # ⚡ Compilación con optimizaciones
     - name: Build and archive
@@ -62,9 +66,14 @@ jobs:
 
     - name: Verify archive
       run: |
+        echo "==== Applications folder ===="
         ls -la build/3105.xcarchive/Products/Applications/
         echo "==== Patches ===="
         ls -la "build/3105.xcarchive/Products/Applications/3105.app/Patches/" || echo "Patches NOT FOUND"
+        echo "==== FF NORMAL ===="
+        ls -la "build/3105.xcarchive/Products/Applications/3105.app/Patches/FF NORMAL/" || echo "FF NORMAL NOT FOUND"
+        echo "==== FF MAX ===="
+        ls -la "build/3105.xcarchive/Products/Applications/3105.app/Patches/FF MAX/" || echo "FF MAX NOT FOUND"
 
     - name: Package unsigned IPA
       run: |
